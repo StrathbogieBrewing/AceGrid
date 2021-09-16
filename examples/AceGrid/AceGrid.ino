@@ -11,8 +11,8 @@
 #define VMIN (27000)
 #define VSET (27500)
 
-#define OFF_TIME (6000) // 6000  x 100 ms = 10 minutes
-#define OFF_START (100) // 100  x 100 ms = 10 seconds
+#define OFF_TIME (60000) // 6000  x 10 ms = 10 minutes
+#define OFF_START (1000) // 100  x 10 ms = 10 seconds
 
 #define LED_RED (3)
 #define LED_GREEN (4)
@@ -36,14 +36,20 @@ static unsigned long lastBMSUpdate = 0;
 static uint16_t batmv = 0;
 static uint16_t vindv = 0;
 static uint16_t setmv = VSET;
-static uint16_t offTimer = 0;
-static uint16_t powerPulseCount = 0;
+static uint16_t ssrOffTimer = 0;
+static uint16_t power = 0;
 
-static volatile unsigned char pulseCount = 0;
-void zcdTriggered(void) { pulseCount++; }
+static int16_t redTimer = 0;
+static int16_t greenTimer = 0;
+static int16_t amberTimer = 0;
+
+static volatile unsigned long pulseMicros = 0;
+void zcdTriggered(void) { pulseMicros = micros(); }
 
 void setup() {
   wdt_disable();
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(PULSE_DETECT),
+                           zcdTriggered, FALLING);
   delay(2000);
   wdt_enable(WDTO_250MS);
 
@@ -62,11 +68,12 @@ void setup() {
   digitalWrite(ATEN_1, HIGH);
   pinMode(ATEN_1, OUTPUT);
 
-  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(PULSE_DETECT),
-                           zcdTriggered, FALLING);
   aceBus.begin();
+  noInterrupts();
+  pulseMicros = 0;
+  interrupts();
   lastBMSUpdate = micros();
-  offTimer = OFF_START;
+  ssrOffTimer = OFF_START;
 }
 
 void update_adc(void) {
@@ -76,44 +83,99 @@ void update_adc(void) {
     adc = 800; // limit adc to 80 V
   adc_filter -= (adc_filter >> 4);
   adc_filter += adc;
-  vindv = (adc_filter >> 1) * 2; // convert to mv
+  vindv = adc_filter >> 4; // convert to 0.1 mv steps
 }
 
-void update_100ms(unsigned long time) {
-  static unsigned char pulseLastCount = 0;
+void update_power(unsigned long usNow) {
+  static unsigned long pulseLastTime = 0;
+  static unsigned long pulseDelta = 0;
+  noInterrupts();
+  unsigned long pulseTime = pulseMicros;
+  interrupts();
 
-  update_adc();                                 // update batterry voltage
-  digitalWrite(LED_RED, !digitalRead(LED_RED)); // show alive
+  if (pulseTime != pulseLastTime) { // check for energy pulse
+    if (pulseLastTime != 0) {
+      unsigned long delta = pulseTime - pulseLastTime;
+      if ((delta > 10000L) && (delta < 600000000L)) { // 10 min (600 sec) max
+        pulseDelta = delta;
+        power = 3600000000L / delta;
+      }
+    }
+    pulseLastTime = pulseTime;
+  } else {
+    if ((pulseLastTime != 0) && (pulseDelta != 0)){
+      unsigned long delta = usNow - pulseLastTime;
+      if ((delta > pulseDelta) &&
+          (delta < 600000000L)) { // 10 min (600 sec) max
+        power = 3600000000L / delta;
+      }
+    }
+  }
+}
 
-  if (lastBMSUpdate + 1000000L < time)
-    offTimer = OFF_TIME;
+void update_leds(void) {
+  if (redTimer > 0) {
+    redTimer -= 10;
+    digitalWrite(LED_RED, HIGH);
+  } else {
+    digitalWrite(LED_RED, LOW);
+  }
+
+  if (greenTimer > 0) {
+    greenTimer -= 10;
+    digitalWrite(LED_GREEN, HIGH);
+  } else {
+    digitalWrite(LED_GREEN, LOW);
+  }
+
+  if (amberTimer > 0) {
+    amberTimer -= 10;
+    digitalWrite(LED_AMBER, HIGH);
+  } else {
+    digitalWrite(LED_AMBER, LOW);
+  }
+}
+
+void update_10ms(unsigned long time) {
+  static unsigned char seconds = 0;
+
+  update_adc(); // update batterry voltage
+  update_power(time);
+
+  if ((time - lastBMSUpdate > 1000000L) && (lastBMSUpdate < time))
+    ssrOffTimer = OFF_TIME;
 
   if (batmv > setmv)
-    offTimer = OFF_TIME;
+    ssrOffTimer = OFF_TIME;
 
-  if (offTimer) {
-    offTimer--;
+  if (ssrOffTimer) {
+    ssrOffTimer--;
     digitalWrite(SSR_DRIVE, LOW);
-    digitalWrite(LED_GREEN, LOW);
   } else {
     digitalWrite(SSR_DRIVE, HIGH);
-    digitalWrite(LED_GREEN, HIGH);
   }
 
-  if (pulseLastCount != pulseCount) { // check for energy pulse
-    pulseLastCount = pulseCount;
-    powerPulseCount++;
+  if (seconds) {
+    seconds--;
+    if ((seconds == 50) && (ssrOffTimer == 0))
+      greenTimer = 50; // show ssr is on
+  } else {
+    seconds = 99;
+    redTimer = 50; // show device is alive
   }
+
+  update_leds();
 }
 
 void loop() {
+  static unsigned long time = 0;
+
   wdt_reset();
   aceBus.update();
 
-  static unsigned long time = 0;
   unsigned long now = micros();
-  if (now >= time + 100000L) {
-    update_100ms(now);
+  if (now >= time + 10000L) {
+    update_10ms(now);
     time = now;
   }
 }
@@ -123,17 +185,18 @@ void aceCallback(tinframe_t *frame) {
   int16_t value;
   if (sig_decode(msg, ACEBMS_VBAT, &value) != FMT_NULL) {
     batmv = value;
-    digitalWrite(LED_AMBER, !digitalRead(LED_AMBER)); // show rx data
     lastBMSUpdate = micros();
   }
   if (sig_decode(msg, ACEBMS_RQST, &value) != FMT_NULL) {
+    if ((value & 0x0003) == 0)
+      amberTimer = 50; // show rx data
     uint8_t frameSequence = value;
-    if (frameSequence == (SIG_MSG_ID(ACEGRID_STATUS) & 0xFF)) {
+    // if (frameSequence == (SIG_MSG_ID(ACEGRID_STATUS) & 0xFF)) {
+    if ((frameSequence & 0x03) == 0x01) {
       tinframe_t txFrame;
       msg_t *txMsg = (msg_t *)txFrame.data;
       sig_encode(txMsg, ACEGRID_VPV, vindv);
-      sig_encode(txMsg, ACEGRID_PPV, powerPulseCount);
-      powerPulseCount = 0;
+      sig_encode(txMsg, ACEGRID_PPV, power);
       aceBus.write(&txFrame);
     }
   }
