@@ -7,9 +7,9 @@
 #include "AceDump.h"
 #include "AceGrid.h"
 
-#define VMAX (28000)
-#define VMIN (27000)
-#define VSET (27500)
+#define VMAX (27500)
+#define VMIN (26500)
+#define VSET (27000)
 
 #define OFF_TIME (60000) // 6000  x 10 ms = 10 minutes
 #define OFF_START (1000) // 100  x 10 ms = 10 seconds
@@ -36,7 +36,7 @@ static unsigned long lastBMSUpdate = 0;
 static uint16_t batmv = 0;
 static uint16_t vindv = 0;
 static uint16_t setmv = VSET;
-static uint16_t ssrOffTimer = 0;
+static uint16_t ssrOffTimer = OFF_START;
 static uint16_t power = 0;
 
 static int16_t redTimer = 0;
@@ -73,12 +73,11 @@ void setup() {
   pulseMicros = 0;
   interrupts();
   lastBMSUpdate = micros();
-  ssrOffTimer = OFF_START;
 }
 
 void update_adc(void) {
   static uint16_t adc_filter = 0;
-  uint16_t adc = analogRead(VIN_SENSE); // use local vbat for control
+  uint16_t adc = analogRead(VIN_SENSE);
   if (adc > 800)
     adc = 800; // limit adc to 80 V
   adc_filter -= (adc_filter >> 4);
@@ -103,11 +102,15 @@ void update_power(unsigned long usNow) {
     }
     pulseLastTime = pulseTime;
   } else {
-    if ((pulseLastTime != 0) && (pulseDelta != 0)){
+    if ((pulseLastTime != 0) && (pulseDelta != 0)) {
       unsigned long delta = usNow - pulseLastTime;
-      if ((delta > pulseDelta) &&
-          (delta < 600000000L)) { // 10 min (600 sec) max
-        power = 3600000000L / delta;
+      if (delta > pulseDelta) {
+        if (delta < 600000000L) { // 10 min (600 sec) max
+          power = 3600000000L / delta;
+        } else {
+          power = 0;
+          pulseLastTime = usNow - 600000000L;
+        }
       }
     }
   }
@@ -139,15 +142,15 @@ void update_leds(void) {
 void update_10ms(unsigned long time) {
   static unsigned char seconds = 0;
 
-  update_adc(); // update batterry voltage
+  update_adc(); // update solar input voltage
   update_power(time);
 
-  if ((time - lastBMSUpdate > 1000000L) && (lastBMSUpdate < time))
+  if ((time - lastBMSUpdate > 1000000L) && (lastBMSUpdate < time)) {
     ssrOffTimer = OFF_TIME;
-
-  if (batmv > setmv)
+  }
+  if (batmv > setmv) {
     ssrOffTimer = OFF_TIME;
-
+  }
   if (ssrOffTimer) {
     ssrOffTimer--;
     digitalWrite(SSR_DRIVE, LOW);
@@ -182,7 +185,7 @@ void loop() {
 
 void aceCallback(tinframe_t *frame) {
   msg_t *msg = (msg_t *)(frame->data);
-  int16_t value;
+  uint16_t value;
   if (sig_decode(msg, ACEBMS_VBAT, &value) != FMT_NULL) {
     batmv = value;
     lastBMSUpdate = micros();
@@ -197,6 +200,7 @@ void aceCallback(tinframe_t *frame) {
       msg_t *txMsg = (msg_t *)txFrame.data;
       sig_encode(txMsg, ACEGRID_VPV, vindv);
       sig_encode(txMsg, ACEGRID_PPV, power);
+      sig_encode(txMsg, ACEGRID_VSET, setmv);
       aceBus.write(&txFrame);
     }
   }
