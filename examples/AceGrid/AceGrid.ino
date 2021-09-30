@@ -100,7 +100,7 @@ void update_power(unsigned long usNow) {
   unsigned long pulseTime = pulseMicros;
   interrupts();
 
-  energy = ((pulseCount / PULSES_PER_WH) * 655L) >> 16L;  // divide by 100
+  energy = SIG_DIVU16BY10(pulseCount / PULSES_PER_WH);  // divide by 10
 
   if (pulseTime != pulseLastTime) { // check for energy pulse
     if (pulseLastTime != 0) {
