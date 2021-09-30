@@ -7,9 +7,9 @@
 #include "AceDump.h"
 #include "AceGrid.h"
 
-#define VMAX (27500)
-#define VMIN (26500)
-#define VSET (27000)
+#define VMAX (27000)
+#define VMIN (26000)
+#define VSET (26800)
 
 #define OFF_TIME (60000) // 6000  x 10 ms = 10 minutes
 #define OFF_START (1000) // 100  x 10 ms = 10 seconds
@@ -28,6 +28,11 @@
 
 #define VIN_SENSE (A1)
 
+#define MICROS_IN_HOUR (3600000000L)
+#define MICROS_IN_10MS (10000L)
+
+#define PULSES_PER_WH (1L)
+
 #define kRxInterruptPin (2)
 void aceCallback(tinframe_t *frame);
 AceBus aceBus(Serial, kRxInterruptPin, aceCallback);
@@ -38,13 +43,15 @@ static uint16_t vindv = 0;
 static uint16_t setmv = VSET;
 static uint16_t ssrOffTimer = OFF_START;
 static uint16_t power = 0;
+static uint16_t energy = 0;
+static unsigned long pulseCount = 0;
 
 static int16_t redTimer = 0;
 static int16_t greenTimer = 0;
 static int16_t amberTimer = 0;
 
 static volatile unsigned long pulseMicros = 0;
-void zcdTriggered(void) { pulseMicros = micros(); }
+void zcdTriggered(void) { pulseMicros = micros() | 1L;}
 
 void setup() {
   wdt_disable();
@@ -88,16 +95,20 @@ void update_adc(void) {
 void update_power(unsigned long usNow) {
   static unsigned long pulseLastTime = 0;
   static unsigned long pulseDelta = 0;
+
   noInterrupts();
   unsigned long pulseTime = pulseMicros;
   interrupts();
 
+  energy = ((pulseCount / PULSES_PER_WH) * 655L) >> 16L;  // divide by 100
+
   if (pulseTime != pulseLastTime) { // check for energy pulse
     if (pulseLastTime != 0) {
       unsigned long delta = pulseTime - pulseLastTime;
-      if ((delta > 10000L) && (delta < 600000000L)) { // 10 min (600 sec) max
+      if ((delta > MICROS_IN_10MS) && (delta <= MICROS_IN_HOUR)) { // 60 minutes max
+        pulseCount++;
         pulseDelta = delta;
-        power = 3600000000L / delta;
+        power = (MICROS_IN_HOUR / PULSES_PER_WH) / delta;
       }
     }
     pulseLastTime = pulseTime;
@@ -105,11 +116,11 @@ void update_power(unsigned long usNow) {
     if ((pulseLastTime != 0) && (pulseDelta != 0)) {
       unsigned long delta = usNow - pulseLastTime;
       if (delta > pulseDelta) {
-        if (delta < 600000000L) { // 10 min (600 sec) max
-          power = 3600000000L / delta;
+        if (delta < MICROS_IN_HOUR) { // 60 minutes max
+          power = (MICROS_IN_HOUR / PULSES_PER_WH) / delta;
         } else {
           power = 0;
-          pulseLastTime = usNow - 600000000L;
+          pulseLastTime = usNow - MICROS_IN_HOUR;
         }
       }
     }
@@ -187,7 +198,7 @@ void aceCallback(tinframe_t *frame) {
   msg_t *msg = (msg_t *)(frame->data);
   uint16_t value;
   if (sig_decode(msg, ACEBMS_VBAT, &value) != FMT_NULL) {
-    batmv = value;
+    batmv = value * 10;
     lastBMSUpdate = micros();
   }
   if (sig_decode(msg, ACEBMS_RQST, &value) != FMT_NULL) {
@@ -200,13 +211,14 @@ void aceCallback(tinframe_t *frame) {
       msg_t *txMsg = (msg_t *)txFrame.data;
       sig_encode(txMsg, ACEGRID_VPV, vindv);
       sig_encode(txMsg, ACEGRID_PPV, power);
-      sig_encode(txMsg, ACEGRID_VSET, setmv);
+      sig_encode(txMsg, ACEGRID_EPV, energy);
       aceBus.write(&txFrame);
     }
   }
-  if (sig_decode(msg, ACEGRID_VLIMIT, &value) != FMT_NULL) {
+  if (sig_decode(msg, ACEGRID_VSET, &value) != FMT_NULL) {
     if ((value <= VMAX) && (value >= VMIN)) {
       setmv = value;
+      aceBus.write(frame);  // acknowledgement
     }
   }
 }
