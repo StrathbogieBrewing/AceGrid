@@ -105,7 +105,7 @@ void update_power(unsigned long usNow) {
   if (pulseTime != pulseLastTime) { // check for energy pulse
     if (pulseLastTime != 0) {
       unsigned long delta = pulseTime - pulseLastTime;
-      if ((delta > MICROS_IN_10MS) && (delta <= MICROS_IN_HOUR)) { // 60 minutes max
+      if ((delta > MICROS_IN_10MS) && (delta < MICROS_IN_HOUR)) { // 60 minutes max
         pulseCount++;
         pulseDelta = delta;
         power = (MICROS_IN_HOUR / PULSES_PER_WH) / delta;
@@ -120,7 +120,7 @@ void update_power(unsigned long usNow) {
           power = (MICROS_IN_HOUR / PULSES_PER_WH) / delta;
         } else {
           power = 0;
-          pulseLastTime = usNow - MICROS_IN_HOUR;
+          pulseLastTime = 0;
         }
       }
     }
@@ -184,13 +184,14 @@ void update_10ms(unsigned long time) {
 void loop() {
   static unsigned long time = 0;
 
-  wdt_reset();
   aceBus.update();
 
   unsigned long now = micros();
-  if (now >= time + 10000L) {
-    update_10ms(now);
+  // if (now >= time + 10000L) {
+  if (now - time >= 10000L) {
     time = now;
+    update_10ms(now);
+    wdt_reset();
   }
 }
 
@@ -218,7 +219,7 @@ void aceCallback(tinframe_t *frame) {
   if (sig_decode(msg, ACEGRID_VSET, &value) != FMT_NULL) {
     if ((value <= VMAX) && (value >= VMIN)) {
       setmv = value;
-      aceBus.write(frame);  // acknowledgement
+      // aceBus.write(frame);  // acknowledgement
     }
   }
 }
