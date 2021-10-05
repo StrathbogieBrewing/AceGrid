@@ -3,7 +3,7 @@
 #include "PinChangeInterrupt.h"
 
 #include "AceBMS.h"
-#include "AceBus.h"
+#include "TinBus.h"
 #include "AceDump.h"
 #include "AceGrid.h"
 
@@ -34,8 +34,8 @@
 #define PULSES_PER_WH (1L)
 
 #define kRxInterruptPin (2)
-void aceCallback(tinframe_t *frame);
-AceBus aceBus(Serial, kRxInterruptPin, aceCallback);
+void busCallback(unsigned char *data, unsigned char length);
+TinBus tinBus(Serial, ACEBMS_BAUD, kRxInterruptPin, busCallback);
 
 static unsigned long lastBMSUpdate = 0;
 static uint16_t batmv = 0;
@@ -75,7 +75,7 @@ void setup() {
   digitalWrite(ATEN_1, HIGH);
   pinMode(ATEN_1, OUTPUT);
 
-  aceBus.begin();
+  tinBus.begin();
   noInterrupts();
   pulseMicros = 0;
   interrupts();
@@ -184,10 +184,9 @@ void update_10ms(unsigned long time) {
 void loop() {
   static unsigned long time = 0;
 
-  aceBus.update();
+  tinBus.update();
 
   unsigned long now = micros();
-  // if (now >= time + 10000L) {
   if (now - time >= 10000L) {
     time = now;
     update_10ms(now);
@@ -195,8 +194,8 @@ void loop() {
   }
 }
 
-void aceCallback(tinframe_t *frame) {
-  msg_t *msg = (msg_t *)(frame->data);
+void busCallback(unsigned char *data, unsigned char length) {
+  msg_t *msg = (msg_t *)data;
   uint16_t value;
   if (sig_decode(msg, ACEBMS_VBAT, &value) != FMT_NULL) {
     batmv = value * 10;
@@ -208,18 +207,17 @@ void aceCallback(tinframe_t *frame) {
     uint8_t frameSequence = value;
     // if (frameSequence == (SIG_MSG_ID(ACEGRID_STATUS) & 0xFF)) {
     if ((frameSequence & 0x03) == 0x01) {
-      tinframe_t txFrame;
-      msg_t *txMsg = (msg_t *)txFrame.data;
-      sig_encode(txMsg, ACEGRID_VPV, vindv);
-      sig_encode(txMsg, ACEGRID_PPV, power);
-      sig_encode(txMsg, ACEGRID_EPV, energy);
-      aceBus.write(&txFrame);
+      msg_t txMsg;
+      sig_encode(&txMsg, ACEGRID_VPV, vindv);
+      sig_encode(&txMsg, ACEGRID_PPV, power);
+      uint8_t size = sig_encode(&txMsg, ACEGRID_EPV, energy);
+      tinBus.write((uint8_t *)&txMsg, size, MEDIUM_PRIORITY);
     }
   }
   if (sig_decode(msg, ACEGRID_VSET, &value) != FMT_NULL) {
     if ((value <= VMAX) && (value >= VMIN)) {
       setmv = value;
-      // aceBus.write(frame);  // acknowledgement
+      // tinBus.write(frame);  // acknowledgement
     }
   }
 }
