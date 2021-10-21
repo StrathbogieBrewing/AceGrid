@@ -31,7 +31,7 @@ static const int16_t PROGMEM TEMP_LOOKUP_TABLE[] = TEMP_TABLE;
 //   return 0;
 // }
 
-int16_t ntc_getDeciCelcius(int16_t rawADC) {
+int16_t ntc_getDeciCelcius(uint16_t rawADC) {
   uint8_t i = 0;
   while (rawADC > LOOKUP_TABLE(i)) {
     if (++i >= TEMP_LOOKUP_TABLE_SIZE) {

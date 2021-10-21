@@ -4,8 +4,9 @@
 
 #include "AceBMS.h"
 #include "AceDump.h"
-#include "AceGrid.h"
+#include "AcePump.h"
 #include "TinBus.h"
+#include "ntc.h"
 
 #define VMAX (27000)
 #define VMIN (26000)
@@ -33,31 +34,39 @@
 //      (D 8) PB0 14|    |15  PB1 (D 9) PWM
 //                  +----+
 //
-#define LED_AMBER (9)
+#define PIN_LED_AMBER (9)
 
-#define INVERTER_SSR (6)
-#define PUMP_SSR (7)
-#define PULSE_DETECT (3)
+#define PIN_INVERTER_SSR (6)
+#define PIN_PUMP_SSR (7)
 
-#define TEMP_SLAB_TOP (A0)
-#define TEMP_SLAB_BOT (A1)
-#define TEMP_PUMP_OUT (A2)
-#define TEMP_PUMP_RET (A3)
+#define PIN_POWER_PULSE (5)
 
-#define TEMP_CHANNELS (4)
+#define TEMP_SLAB_TOP (0)
+#define TEMP_SLAB_BOT (1)
+#define TEMP_TANK_TOP (2)
+#define TEMP_TANK_BOT (3)
 
-static int16_t tempValue[TEMP_CHANNELS] = {0};
-static uint8_t tempChannel[TEMP_CHANNELS] = {TEMP_SLAB_TOP, TEMP_SLAB_BOT,
-                                             TEMP_PUMP_OUT, TEMP_PUMP_RET};
+#define PIN_TEMP_SLAB_TOP (A0)
+#define PIN_TEMP_SLAB_BOT (A1)
+#define PIN_TEMP_TANK_TOP (A2)
+#define PIN_TEMP_TANK_BOT (A3)
+
+#define ADC_COUNT (4)
+
+static uint8_t ADCIndex = 0;
+static uint16_t ADCFilter[ADC_COUNT] = {0};
+static int16_t Temperature[ADC_COUNT] = {0};
+static uint8_t ADCPins[ADC_COUNT] = {PIN_TEMP_SLAB_TOP, PIN_TEMP_SLAB_BOT,
+                                     PIN_TEMP_TANK_TOP, PIN_TEMP_TANK_BOT};
 
 #define MICROS_IN_HOUR (3600000000L)
 #define MICROS_IN_10MS (10000L)
 
 #define PULSES_PER_WH (1L)
 
-#define kRxInterruptPin (2)
+#define PIN_RX_INTERRUPT (2)
 void busCallback(unsigned char *data, unsigned char length);
-TinBus tinBus(Serial, ACEBMS_BAUD, kRxInterruptPin, busCallback);
+TinBus tinBus(Serial, ACEBMS_BAUD, PIN_RX_INTERRUPT, busCallback);
 
 static unsigned long lastBMSUpdate = 0;
 static uint16_t batmv = 0;
@@ -68,11 +77,8 @@ static uint16_t power = 0;
 static uint16_t energy = 0;
 static unsigned long pulseCount = 0;
 
-static int16_t redTimer = 0;
-static int16_t greenTimer = 0;
 static int16_t amberTimer = 0;
 
-#define kPowerInterruptPin (5)
 static volatile unsigned long powerMicros = 0;
 void powerInterrupt(void) { powerMicros = micros() | 1L; }
 
@@ -82,17 +88,17 @@ void setup() {
   delay(2000);
   wdt_enable(WDTO_250MS);
 
-  attachInterrupt(digitalPinToInterrupt(kPowerInterruptPin), powerInterrupt,
+  attachInterrupt(digitalPinToInterrupt(PIN_POWER_PULSE), powerInterrupt,
                   FALLING);
 
-  digitalWrite(LED_AMBER, LOW);
-  pinMode(LED_AMBER, OUTPUT);
+  digitalWrite(PIN_LED_AMBER, LOW);
+  pinMode(PIN_LED_AMBER, OUTPUT);
 
-  digitalWrite(INVERTER_SSR, LOW);
-  pinMode(INVERTER_SSR, OUTPUT);
+  digitalWrite(PIN_INVERTER_SSR, LOW);
+  pinMode(PIN_INVERTER_SSR, OUTPUT);
 
-  digitalWrite(PUMP_SSR, LOW);
-  pinMode(PUMP_SSR, OUTPUT);
+  digitalWrite(PIN_PUMP_SSR, LOW);
+  pinMode(PIN_PUMP_SSR, OUTPUT);
 
   tinBus.begin();
   noInterrupts();
@@ -102,13 +108,13 @@ void setup() {
 }
 
 void update_adc(void) {
-  static uint16_t adc_filter = 0;
-  uint16_t adc = analogRead(VIN_SENSE);
-  if (adc > 800)
-    adc = 800; // limit adc to 80 V
-  adc_filter -= (adc_filter >> 4);
-  adc_filter += adc;
-  vindv = adc_filter >> 4; // convert to 0.1 mv steps
+  if (++ADCIndex >= ADC_COUNT)
+    ADCIndex = 0;
+  uint16_t filter = ADCFilter[ADCIndex];
+  filter -= (filter >> 4);
+  filter += analogRead(ADCPins[ADCIndex]);
+  ADCFilter[ADCIndex] = filter;
+  Temperature[ADCIndex] = ntc_getDeciCelcius(filter >> 4);
 }
 
 void update_power(unsigned long usNow) {
@@ -148,25 +154,11 @@ void update_power(unsigned long usNow) {
 }
 
 void update_leds(void) {
-  // if (redTimer > 0) {
-  //   redTimer -= 10;
-  //   digitalWrite(LED_RED, HIGH);
-  // } else {
-  //   digitalWrite(LED_RED, LOW);
-  // }
-
-  // if (greenTimer > 0) {
-  //   greenTimer -= 10;
-  //   digitalWrite(LED_GREEN, HIGH);
-  // } else {
-  //   digitalWrite(LED_GREEN, LOW);
-  // }
-
   if (amberTimer > 0) {
     amberTimer -= 10;
-    digitalWrite(LED_AMBER, HIGH);
+    digitalWrite(PIN_LED_AMBER, HIGH);
   } else {
-    digitalWrite(LED_AMBER, LOW);
+    digitalWrite(PIN_LED_AMBER, LOW);
   }
 }
 
@@ -184,18 +176,18 @@ void update_10ms(unsigned long time) {
   }
   if (ssrOffTimer) {
     ssrOffTimer--;
-    digitalWrite(INVERTER_SSR, LOW);
+    digitalWrite(PIN_INVERTER_SSR, LOW);
   } else {
-    digitalWrite(INVERTER_SSR, HIGH);
+    digitalWrite(PIN_INVERTER_SSR, HIGH);
   }
 
   if (seconds) {
     seconds--;
-    if ((seconds == 50) && (ssrOffTimer == 0))
-      greenTimer = 50; // show ssr is on
+    // if ((seconds == 50) && (ssrOffTimer == 0))
+    //   greenTimer = 50; // show ssr is on
   } else {
     seconds = 99;
-    redTimer = 50; // show device is alive
+    // redTimer = 50; // show device is alive
   }
 
   update_leds();
@@ -225,17 +217,24 @@ void busCallback(unsigned char *data, unsigned char length) {
     if ((value & 0x0003) == 0)
       amberTimer = 50; // show rx data
     uint8_t frameSequence = value;
-    // if (frameSequence == (SIG_MSG_ID(ACEGRID_STATUS) & 0xFF)) {
-    if ((frameSequence & 0x0F) == (SIG_MSG_ID(ACEGRID_STATUS) & 0x0F)) {
-      // if ((frameSequence & 0x03) == 0x01) {
+    if ((frameSequence & 0x0F) == (SIG_MSG_ID(ACEPUMP_STATUS) & 0x0F)) {
       msg_t txMsg;
-      sig_encode(&txMsg, ACEGRID_VPV, vindv);
-      sig_encode(&txMsg, ACEGRID_PPV, power);
-      uint8_t size = sig_encode(&txMsg, ACEGRID_EPV, energy);
+      sig_encode(&txMsg, ACEPUMP_VSET, setmv);
+      sig_encode(&txMsg, ACEPUMP_PPV, power);
+      uint8_t size = sig_encode(&txMsg, ACEPUMP_EPV, energy);
+      tinBus.write((uint8_t *)&txMsg, size, MEDIUM_PRIORITY);
+    }
+    if (frameSequence == SIG_MSG_ID(ACEPUMP_TEMPS)) {
+      msg_t txMsg;
+      sig_encode(&txMsg, ACEPUMP_SLAB_TOP, Temperature[TEMP_SLAB_TOP]);
+      sig_encode(&txMsg, ACEPUMP_SLAB_BOT, Temperature[TEMP_SLAB_BOT]);
+      sig_encode(&txMsg, ACEPUMP_TANK_TOP, Temperature[TEMP_TANK_TOP]);
+      uint8_t size =
+          sig_encode(&txMsg, ACEPUMP_TANK_BOT, Temperature[TEMP_TANK_BOT]);
       tinBus.write((uint8_t *)&txMsg, size, MEDIUM_PRIORITY);
     }
   }
-  if (sig_decode(msg, ACEGRID_VSET, &value) != FMT_NULL) {
+  if (sig_decode(msg, ACEPUMP_VSET, &value) != FMT_NULL) {
     if ((value <= VMAX) && (value >= VMIN)) {
       setmv = value;
       // tinBus.write(frame);  // acknowledgement

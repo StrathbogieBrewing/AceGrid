@@ -7,7 +7,7 @@
 extern "C"{
 #endif
 
-int16_t ntc_getDeciCelcius(int16_t rawADC);
+int16_t ntc_getDeciCelcius(uint16_t rawADC);
 
 #ifdef __cplusplus
 } // extern "C"
