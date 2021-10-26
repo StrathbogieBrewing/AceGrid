@@ -33,13 +33,14 @@
 //      (D 7) PD7 13|    |16  PB2 (D 10) PWM
 //      (D 8) PB0 14|    |15  PB1 (D 9) PWM
 //                  +----+
-//
+
 #define PIN_LED_AMBER (9)
+#define PIN_AUX_POWER (8)
 
 #define PIN_INVERTER_SSR (6)
 #define PIN_PUMP_SSR (7)
 
-#define PIN_POWER_PULSE (5)
+#define PIN_POWER_PULSE (3)
 
 #define TEMP_SLAB_TOP (0)
 #define TEMP_SLAB_BOT (1)
@@ -55,12 +56,12 @@
 
 static uint8_t ADCIndex = 0;
 static uint16_t ADCFilter[ADC_COUNT] = {0};
-static int16_t Temperature[ADC_COUNT] = {0};
+static int16_t temperature[ADC_COUNT] = {0};
 static uint8_t ADCPins[ADC_COUNT] = {PIN_TEMP_SLAB_TOP, PIN_TEMP_SLAB_BOT,
                                      PIN_TEMP_TANK_TOP, PIN_TEMP_TANK_BOT};
 
 #define MICROS_IN_HOUR (3600000000L)
-#define MICROS_IN_10MS (10000L)
+#define MICROS_IN_100MS (100000L)
 
 #define PULSES_PER_WH (1L)
 
@@ -80,7 +81,10 @@ static unsigned long pulseCount = 0;
 static int16_t amberTimer = 0;
 
 static volatile unsigned long powerMicros = 0;
-void powerInterrupt(void) { powerMicros = micros() | 1L; }
+void powerInterrupt(void) {
+  PORTD ^= (1 << 4);
+  DDRD |= (1 << 4);
+  powerMicros = micros() | 1L; }
 
 void setup() {
   wdt_disable();
@@ -89,10 +93,13 @@ void setup() {
   wdt_enable(WDTO_250MS);
 
   attachInterrupt(digitalPinToInterrupt(PIN_POWER_PULSE), powerInterrupt,
-                  FALLING);
+                  RISING);
 
   digitalWrite(PIN_LED_AMBER, LOW);
   pinMode(PIN_LED_AMBER, OUTPUT);
+
+  digitalWrite(PIN_AUX_POWER, HIGH);
+  pinMode(PIN_AUX_POWER, OUTPUT);
 
   digitalWrite(PIN_INVERTER_SSR, LOW);
   pinMode(PIN_INVERTER_SSR, OUTPUT);
@@ -114,7 +121,7 @@ void update_adc(void) {
   filter -= (filter >> 4);
   filter += analogRead(ADCPins[ADCIndex]);
   ADCFilter[ADCIndex] = filter;
-  Temperature[ADCIndex] = ntc_getDeciCelcius(filter >> 4);
+  temperature[ADCIndex] = ntc_getDeciCelcius(filter >> 4);
 }
 
 void update_power(unsigned long usNow) {
@@ -130,14 +137,17 @@ void update_power(unsigned long usNow) {
   if (pulseTime != pulseLastTime) { // check for energy pulse
     if (pulseLastTime != 0) {
       unsigned long delta = pulseTime - pulseLastTime;
-      if ((delta > MICROS_IN_10MS) &&
+      if ((delta > MICROS_IN_100MS) &&
           (delta < MICROS_IN_HOUR)) { // 60 minutes max
         pulseCount++;
         pulseDelta = delta;
         power = (MICROS_IN_HOUR / PULSES_PER_WH) / delta;
+        pulseLastTime = pulseTime;
       }
+    } else {
+      pulseLastTime = pulseTime;
     }
-    pulseLastTime = pulseTime;
+
   } else {
     if ((pulseLastTime != 0) && (pulseDelta != 0)) {
       unsigned long delta = usNow - pulseLastTime;
@@ -153,17 +163,7 @@ void update_power(unsigned long usNow) {
   }
 }
 
-void update_leds(void) {
-  if (amberTimer > 0) {
-    amberTimer -= 10;
-    digitalWrite(PIN_LED_AMBER, HIGH);
-  } else {
-    digitalWrite(PIN_LED_AMBER, LOW);
-  }
-}
-
 void update_10ms(unsigned long time) {
-  static unsigned char seconds = 0;
 
   update_adc(); // update solar input voltage
   update_power(time);
@@ -181,16 +181,19 @@ void update_10ms(unsigned long time) {
     digitalWrite(PIN_INVERTER_SSR, HIGH);
   }
 
-  if (seconds) {
-    seconds--;
-    // if ((seconds == 50) && (ssrOffTimer == 0))
-    //   greenTimer = 50; // show ssr is on
-  } else {
-    seconds = 99;
-    // redTimer = 50; // show device is alive
+  if(temperature[TEMP_TANK_TOP] > 350){
+    digitalWrite(PIN_PUMP_SSR, HIGH);
+  }
+  if(temperature[TEMP_TANK_TOP] < 300){
+    digitalWrite(PIN_PUMP_SSR, LOW);
   }
 
-  update_leds();
+  if (amberTimer > 0) {
+    amberTimer -= 10;
+    digitalWrite(PIN_LED_AMBER, HIGH);
+  } else {
+    digitalWrite(PIN_LED_AMBER, LOW);
+  }
 }
 
 void loop() {
@@ -221,16 +224,17 @@ void busCallback(unsigned char *data, unsigned char length) {
       msg_t txMsg;
       sig_encode(&txMsg, ACEPUMP_VSET, setmv);
       sig_encode(&txMsg, ACEPUMP_PPV, power);
+      sig_encode(&txMsg, ACEPUMP_PUMP, digitalRead(PIN_PUMP_SSR));
       uint8_t size = sig_encode(&txMsg, ACEPUMP_EPV, energy);
       tinBus.write((uint8_t *)&txMsg, size, MEDIUM_PRIORITY);
     }
     if (frameSequence == SIG_MSG_ID(ACEPUMP_TEMPS)) {
       msg_t txMsg;
-      sig_encode(&txMsg, ACEPUMP_SLAB_TOP, Temperature[TEMP_SLAB_TOP]);
-      sig_encode(&txMsg, ACEPUMP_SLAB_BOT, Temperature[TEMP_SLAB_BOT]);
-      sig_encode(&txMsg, ACEPUMP_TANK_TOP, Temperature[TEMP_TANK_TOP]);
+      sig_encode(&txMsg, ACEPUMP_SLAB_TOP, temperature[TEMP_SLAB_TOP]);
+      sig_encode(&txMsg, ACEPUMP_SLAB_BOT, temperature[TEMP_SLAB_BOT]);
+      sig_encode(&txMsg, ACEPUMP_TANK_TOP, temperature[TEMP_TANK_TOP]);
       uint8_t size =
-          sig_encode(&txMsg, ACEPUMP_TANK_BOT, Temperature[TEMP_TANK_BOT]);
+          sig_encode(&txMsg, ACEPUMP_TANK_BOT, temperature[TEMP_TANK_BOT]);
       tinBus.write((uint8_t *)&txMsg, size, MEDIUM_PRIORITY);
     }
   }
