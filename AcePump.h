@@ -1,18 +1,18 @@
 #ifndef ACEPUMP_H
 #define ACEPUMP_H
 
-#include "sig.h"
+#include "AceBMS.h"
 
-#define ACEPUMP_STATUS (0x08 | SIG_SIZE7)
-#define ACEPUMP_TEMPS (0x09 | SIG_SIZE8)
-#define ACEPUMP_CONFIG (0x19 | SIG_SIZE2)
+#define ACEPUMP_STATUS (ACEBMS_PUMP_STATUS | SIG_SIZE8)
+#define ACEPUMP_TEMPS (ACEBMS_PUMP_TEMPS | SIG_SIZE8)
+#define ACEPUMP_CONFIG (ACEBMS_PUMP_TEMPS | 0x10 | SIG_SIZE2)
 
 #define ACEPUMP_PPV (ACEPUMP_STATUS | SIG_WORD | SIG_OFF0 | SIG_UNIT | SIG_UINT)
 #define ACEPUMP_EPV (ACEPUMP_STATUS | SIG_WORD | SIG_OFF2 | SIG_CENT | SIG_UINT)
 #define ACEPUMP_VSET                                                         \
   (ACEPUMP_STATUS | SIG_WORD | SIG_OFF4 | SIG_CENT | SIG_UINT  | SIG_RW)
 #define ACEPUMP_PUMP (ACEPUMP_STATUS | SIG_BYTE | SIG_OFF6 | SIG_UNIT | SIG_UINT)
-
+#define ACEPUMP_INV (ACEPUMP_STATUS | SIG_BYTE | SIG_OFF7 | SIG_UNIT | SIG_UINT)
 
 #define ACEPUMP_SLAB_TOP (ACEPUMP_TEMPS | SIG_WORD | SIG_OFF0 | SIG_DECI)
 #define ACEPUMP_SLAB_BOT (ACEPUMP_TEMPS | SIG_WORD | SIG_OFF2 | SIG_DECI)
@@ -25,7 +25,7 @@
 #define ACEPUMP_NAMES                                                          \
   {"gPpv", ACEPUMP_PPV}, { "gVs", ACEPUMP_VSET }, { "gkwh", ACEPUMP_EPV }, \
   {"pSlabTop", ACEPUMP_SLAB_TOP}, {"pSlabBot", ACEPUMP_SLAB_BOT}, \
-  {"pTankTop", ACEPUMP_TANK_TOP}, {"pTankBot", ACEPUMP_TANK_TOP}, \
-  {"pPump", ACEPUMP_PUMP}
+  {"pTankTop", ACEPUMP_TANK_TOP}, {"pTankBot", ACEPUMP_TANK_BOT}, \
+  {"pPump", ACEPUMP_PUMP}, {"pInv", ACEPUMP_INV}
 
 #endif // ACEPUMP_H

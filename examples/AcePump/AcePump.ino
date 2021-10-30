@@ -12,7 +12,7 @@
 #define VMIN (26000)
 #define VSET (26800)
 
-#define OFF_TIME (60000) // 6000  x 10 ms = 10 minutes
+#define OFF_TIME (180000) // 180000  x 10 ms = 30 minutes
 #define OFF_START (1000) // 100  x 10 ms = 10 seconds
 
 // ATMEL ATMEGA8 & 168 / ARDUINO
@@ -81,10 +81,7 @@ static unsigned long pulseCount = 0;
 static int16_t amberTimer = 0;
 
 static volatile unsigned long powerMicros = 0;
-void powerInterrupt(void) {
-  PORTD ^= (1 << 4);
-  DDRD |= (1 << 4);
-  powerMicros = micros() | 1L; }
+void powerInterrupt(void) {powerMicros = micros() | 1L; }
 
 void setup() {
   wdt_disable();
@@ -222,9 +219,10 @@ void busCallback(unsigned char *data, unsigned char length) {
     uint8_t frameSequence = value;
     if ((frameSequence & 0x0F) == (SIG_MSG_ID(ACEPUMP_STATUS) & 0x0F)) {
       msg_t txMsg;
-      sig_encode(&txMsg, ACEPUMP_VSET, setmv);
+      sig_encode(&txMsg, ACEPUMP_VSET, SIG_DIVU16BY10(setmv));
       sig_encode(&txMsg, ACEPUMP_PPV, power);
       sig_encode(&txMsg, ACEPUMP_PUMP, digitalRead(PIN_PUMP_SSR));
+      sig_encode(&txMsg, ACEPUMP_INV, digitalRead(PIN_INVERTER_SSR));
       uint8_t size = sig_encode(&txMsg, ACEPUMP_EPV, energy);
       tinBus.write((uint8_t *)&txMsg, size, MEDIUM_PRIORITY);
     }
