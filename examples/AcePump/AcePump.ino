@@ -6,11 +6,11 @@
 #include "AceDump.h"
 #include "AcePump.h"
 #include "TinBus.h"
-#include "ntc.h"
+#include "NTC.h"
 
 #define VMAX (27000)
 #define VMIN (26000)
-#define VSET (26800)
+// #define VSET (VMIN)
 
 #define OFF_TIME (180000) // 180000  x 10 ms = 30 minutes
 #define OFF_START (1000) // 100  x 10 ms = 10 seconds
@@ -70,9 +70,10 @@ void busCallback(unsigned char *data, unsigned char length);
 TinBus tinBus(Serial, ACEBMS_BAUD, PIN_RX_INTERRUPT, busCallback);
 
 static unsigned long lastBMSUpdate = 0;
+static unsigned long lastSetvUpdate = 0;
 static uint16_t batmv = 0;
 static uint16_t vindv = 0;
-static uint16_t setmv = VSET;
+static uint16_t setmv = VMIN;
 static uint16_t ssrOffTimer = OFF_START;
 static uint16_t power = 0;
 static uint16_t energy = 0;
@@ -165,6 +166,9 @@ void update_10ms(unsigned long time) {
   update_adc(); // update solar input voltage
   update_power(time);
 
+  if ((time - lastSetvUpdate > 60000000L) && (lastBMSUpdate < time)) {
+    setmv = VMIN;
+  }
   if ((time - lastBMSUpdate > 1000000L) && (lastBMSUpdate < time)) {
     ssrOffTimer = OFF_TIME;
   }
@@ -236,10 +240,11 @@ void busCallback(unsigned char *data, unsigned char length) {
       tinBus.write((uint8_t *)&txMsg, size, MEDIUM_PRIORITY);
     }
   }
-  if (sig_decode(msg, ACEPUMP_VSET, &value) != FMT_NULL) {
-    if ((value <= VMAX) && (value >= VMIN)) {
-      setmv = value;
-      // tinBus.write(frame);  // acknowledgement
+  if (sig_decode(msg, ACEPUMP_SETV, &value) != FMT_NULL) {
+    uint16_t mv = value * 10;
+    if ((mv <= VMAX) && (mv >= VMIN)) {
+      setmv = mv;
+      lastSetvUpdate = micros();
     }
   }
 }

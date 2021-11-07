@@ -24,8 +24,8 @@
 
 #define ACEPUMP_NAMES                                                          \
   {"gPpv", ACEPUMP_PPV}, { "gVs", ACEPUMP_VSET }, { "gkwh", ACEPUMP_EPV }, \
-  {"pSlabTop", ACEPUMP_SLAB_TOP}, {"pSlabBot", ACEPUMP_SLAB_BOT}, \
-  {"pTankTop", ACEPUMP_TANK_TOP}, {"pTankBot", ACEPUMP_TANK_BOT}, \
-  {"pPump", ACEPUMP_PUMP}, {"pInv", ACEPUMP_INV}
+  {"STop", ACEPUMP_SLAB_TOP}, {"SBot", ACEPUMP_SLAB_BOT}, \
+  {"TTop", ACEPUMP_TANK_TOP}, {"TBot", ACEPUMP_TANK_BOT}, \
+  {"Pump", ACEPUMP_PUMP}, {"Inv", ACEPUMP_INV}, { "gSv", ACEPUMP_SETV }
 
 #endif // ACEPUMP_H
