@@ -5,7 +5,7 @@
 #include "AceBMS.h"
 #include "AceDump.h"
 #include "AcePump.h"
-#include "TinBus.h"
+#include "AceBus.h"
 #include "NTC.h"
 
 #define VMAX (27000)
@@ -67,7 +67,7 @@ static uint8_t ADCPins[ADC_COUNT] = {PIN_TEMP_SLAB_TOP, PIN_TEMP_SLAB_BOT,
 
 #define PIN_RX_INTERRUPT (2)
 void busCallback(unsigned char *data, unsigned char length);
-TinBus tinBus(Serial, ACEBMS_BAUD, PIN_RX_INTERRUPT, busCallback);
+AceBus aceBus(Serial, ACEBMS_BAUD, PIN_RX_INTERRUPT, busCallback);
 
 static unsigned long lastBMSUpdate = 0;
 static unsigned long lastSetvUpdate = 0;
@@ -105,7 +105,7 @@ void setup() {
   digitalWrite(PIN_PUMP_SSR, LOW);
   pinMode(PIN_PUMP_SSR, OUTPUT);
 
-  tinBus.begin();
+  aceBus.begin();
   noInterrupts();
   powerMicros = 0;
   interrupts();
@@ -166,7 +166,7 @@ void update_10ms(unsigned long time) {
   update_adc(); // update solar input voltage
   update_power(time);
 
-  if ((time - lastSetvUpdate > 60000000L) && (lastBMSUpdate < time)) {
+  if ((time - lastSetvUpdate > 60000000L) && (lastSetvUpdate < time)) {
     setmv = VMIN;
   }
   if ((time - lastBMSUpdate > 1000000L) && (lastBMSUpdate < time)) {
@@ -200,7 +200,7 @@ void update_10ms(unsigned long time) {
 void loop() {
   static unsigned long time = 0;
 
-  tinBus.update();
+  aceBus.update();
 
   unsigned long now = micros();
   if (now - time >= 10000L) {
@@ -228,7 +228,7 @@ void busCallback(unsigned char *data, unsigned char length) {
       sig_encode(&txMsg, ACEPUMP_PUMP, digitalRead(PIN_PUMP_SSR));
       sig_encode(&txMsg, ACEPUMP_INV, digitalRead(PIN_INVERTER_SSR));
       uint8_t size = sig_encode(&txMsg, ACEPUMP_EPV, energy);
-      tinBus.write((uint8_t *)&txMsg, size, MEDIUM_PRIORITY);
+      aceBus.write((uint8_t *)&txMsg, size, MEDIUM_PRIORITY);
     }
     if (frameSequence == SIG_MSG_ID(ACEPUMP_TEMPS)) {
       msg_t txMsg;
@@ -237,7 +237,7 @@ void busCallback(unsigned char *data, unsigned char length) {
       sig_encode(&txMsg, ACEPUMP_TANK_TOP, temperature[TEMP_TANK_TOP]);
       uint8_t size =
           sig_encode(&txMsg, ACEPUMP_TANK_BOT, temperature[TEMP_TANK_BOT]);
-      tinBus.write((uint8_t *)&txMsg, size, MEDIUM_PRIORITY);
+      aceBus.write((uint8_t *)&txMsg, size, MEDIUM_PRIORITY);
     }
   }
   if (sig_decode(msg, ACEPUMP_SETV, &value) != FMT_NULL) {
